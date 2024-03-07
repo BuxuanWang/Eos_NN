@@ -1,0 +1,487 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+# In[1]:
+
+#%%
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.linear_model import LinearRegression, Lasso, Ridge, ElasticNet
+# More from https://scikit-learn.org/stable/modules/classes.html#module-sklearn.linear_model
+import matplotlib.pyplot as plt
+import numpy as np
+import tensorflow as tf
+from tensorflow.keras import layers, Model
+from tensorflow.keras.optimizers import Adam
+
+def poly_regression(x_train, y_train, degree, reg_model=LinearRegression()):
+    poly = PolynomialFeatures(degree)
+    poly_train = poly.fit_transform(x_train)
+    reg_P = reg_model.fit(poly_train, y_train)   
+    return reg_P, poly
+
+def make_prediction(reg_model, poly, xtest):
+    test_features = poly.transform(xtest)
+    P_pred = reg_model.predict(test_features)
+    return P_pred
+
+
+# In[2]:
+
+
+#%%
+data = np.loadtxt('C:/Users/DELL/Desktop/eos/Bgm_rhoTP.txt') # rho, T, P
+
+dataX = data.copy()
+dataX[:,0] = 100.3870/dataX[:,0] # convert rho to V
+
+lnT = np.log(dataX[:,1])
+lnV = np.log(dataX[:,0])
+
+INCLUDING_LNT = True
+
+if INCLUDING_LNT:
+    dataX = np.hstack((dataX[:,:-1], lnT.reshape(-1,1), dataX[:,-1:]))
+# dataX : V-T-lnT-P
+    
+Data_min = np.min(dataX, axis=0)
+Data_max = np.max(dataX, axis=0)
+Data_scale = Data_max - Data_min
+
+Vmin, Tmin, Pmin = Data_min[:3]
+Vmax, Tmax, Pmax = Data_max[:3]
+Vscale, Tscale, Pscale = Data_scale[:3]
+
+dataX = (dataX - np.min(dataX, axis=0, keepdims=True))/(np.max(dataX, axis=0, keepdims=True) - np.min(dataX, axis=0, keepdims=True))
+
+
+# get train/test split
+Tthres = 3010
+Pthres = 121
+LL_idx = np.logical_and(data[:,1] < Tthres, data[:,2] < Pthres)
+LH_idx = np.logical_and(data[:,1] < Tthres, data[:,2] >= Pthres)
+HL_idx = np.logical_and(data[:,1] >= Tthres, data[:,2] < Pthres)
+HH_idx = np.logical_and(data[:,1] >= Tthres, data[:,2] >= Pthres)
+
+EXP_TYPE = 0
+if EXP_TYPE == 0:
+    data_train = dataX[LL_idx]
+    data_test = dataX[HH_idx]
+elif EXP_TYPE == 1:
+    data_train = dataX[~HH_idx]
+    data_test = dataX[HH_idx]
+elif EXP_TYPE == 2:
+    data_train = dataX[::2]
+    data_test = dataX[1::2]
+
+print('Train size: ', data_train.shape[0])
+print('Test size: ', data_test.shape[0]) 
+
+X = data_train[:,:-1]
+y = data_train[:,-1:]
+# y += np.random.normal(0, 0.01, y.shape)  # this help improve the training
+Xtest = data_test[:,:-1]
+ytest = data_test[:,-1:]
+
+# grid_min, grid_max, grid_num = (0.0,0.0), (1.0,1.0),  (10,10)
+grid_min, grid_max, grid_num = np.min(dataX,axis=0), np.max(dataX,axis=0), (10,10)
+
+from mpl_toolkits.mplot3d import Axes3D
+get_ipython().run_line_magic('matplotlib', 'qt')
+fig = plt.figure(figsize=(10, 8))
+ax1 = fig.add_subplot(111, projection='3d')
+
+p1 = ax1.scatter(X[:, 0], 
+                X[:, 1], 
+                y, 
+                linewidths=2,
+                c='b')
+p2 = ax1.scatter(Xtest[:, 0], 
+                Xtest[:, 1], 
+                ytest, 
+                linewidths=2,
+                c='r')
+ax1.set_xlabel(r'Volume ($\AA^{3}/atom$)', fontsize=15, labelpad=8)
+ax1.set_ylabel('Temperature (K)', fontsize=15, labelpad=12)
+ax1.set_zlabel('Pressure (GPa)', fontsize=15, labelpad=9)
+ax1.legend(['Training Data', 'Test Data'], loc='upper right', fontsize=15)
+
+
+# In[3]:
+
+
+#%%
+degree = 3
+model = LinearRegression()
+# model = Lasso(alpha=1e-5, max_iter=1000, warm_start=True, tol=1e-4, selection='random')
+# model = Ridge(alpha=0.1, max_iter=1000, tol=1e-4, solver='auto')
+# model = ElasticNet(alpha=1e-6, l1_ratio=0.5, max_iter=1000, tol=1e-4, selection='cyclic')
+reg_model, poly_feature_trans = poly_regression(X, y, degree, model)
+P_pred = make_prediction(reg_model, poly_feature_trans, Xtest)
+
+
+if P_pred.ndim == 1:
+    P_pred = P_pred[:,None]
+#%%
+
+fig = plt.figure(figsize=(18, 8))
+ax1 = fig.add_subplot(121, projection='3d')
+p0 = ax1.scatter(Xtest[:, 0]*(Vmax-Vmin)+Vmin, 
+                Xtest[:, 1]*(Tmax-Tmin)+Tmin, 
+                P_pred*(Pmax-Pmin)+Pmin, 
+                alpha=1, marker="o", color="k", 
+                linewidths=2)
+p1 = ax1.scatter(X[:, 0]*(Vmax-Vmin)+Vmin, 
+                X[:, 1]*(Tmax-Tmin)+Tmin, 
+                y*(Pmax-Pmin)+Pmin, 
+                linewidths=2,
+                c='b')
+p2 = ax1.scatter(Xtest[:, 0]*(Vmax-Vmin)+Vmin, 
+                Xtest[:, 1]*(Tmax-Tmin)+Tmin, 
+                ytest*(Pmax-Pmin)+Pmin, 
+                linewidths=2,
+                c='r')
+
+ax1.set_xlabel(r'Volume ($\AA^{3}/atom$)', fontsize=15, labelpad=8)
+ax1.set_ylabel('Temperature (K)', fontsize=15, labelpad=12)
+ax1.set_zlabel('Pressure (GPa)', fontsize=15, labelpad=9)
+ax1.legend(['Simulation Data', 'Training Data', 'Test Data'], loc='upper right', fontsize=15)
+# cbar1 = fig.colorbar(p0, ax=ax1, shrink=0.6)
+# cbar1.set_label(r'$\sigma$', rotation=0, fontsize=15, labelpad=12)
+# cbar1.ax.tick_params(labelsize=12)
+
+# plt.figure()
+# plt.imshow(P_pred.reshape((10,9)), cmap='hot')
+# Calculate the error surface
+
+error = P_pred - ytest
+
+
+# Plot the error surface
+# fig = plt.figure(figsize=(10, 8))
+ax = fig.add_subplot(122, projection='3d')
+# ax.plot_surface(VV, TT, error_surface, cmap='viridis')
+ax.scatter(Xtest[:, 0]*(Vmax-Vmin)+Vmin, 
+           Xtest[:, 1]*(Tmax-Tmin)+Tmin, 
+           error, c='r')
+ax.set_xlabel(r'Volume ($\AA^{3}/atom$)', fontsize=15, labelpad=8)
+ax.set_ylabel('Temperature (K)', fontsize=15, labelpad=12)
+ax.set_zlabel('Error', fontsize=15, labelpad=9)
+ax.set_title('Error Surface', fontsize=15)
+plt.show()
+
+
+#error distribution
+plt.figure()
+plt.hist(error, bins=20)
+
+
+# In[4]:
+
+
+def residual_block(x, fdim, activation='relu'):
+    y = layers.Dense(fdim)(x)
+    y = layers.BatchNormalization()(y)
+    y = layers.Activation(activation)(y)
+    y = layers.Dense(fdim)(y)
+    y = layers.BatchNormalization()(y)
+    y = layers.Add()([x, y])
+    y = layers.Activation(activation)(y)
+    return y
+
+def Predictor(input_dim, output_dim, hidden_dim, model_name,last_activation= 'relu'):
+    x_in = layers.Input(shape= (input_dim,))
+    if isinstance(hidden_dim, int):
+        x = layers.Dense(hidden_dim)(x_in)
+        x = layers.BatchNormalization()(x)
+        x = layers.Activation('relu')(x)
+    if isinstance(hidden_dim, list):
+        x = layers.Dense(hidden_dim[0])(x_in)
+        x = layers.BatchNormalization()(x)
+        x = layers.Activation('relu')(x)
+        for dim in hidden_dim[1:]:
+            x = residual_block(x, dim)
+            
+    x = layers.Dropout(0.2)(x)
+    x = layers.Dense(output_dim)(x)
+    x_out = layers.Activation(last_activation)(x)
+    
+    return Model(x_in, x_out, name = model_name)
+
+def make_prediction_e(error_model_pre_std, error, p_pred):
+    error_model_pre = (np.max(error, axis=0, keepdims=True)-np.min(error, axis=0, keepdims=True))*error_model_pre_std
+    + np.min(error, axis=0, keepdims=True)
+    p_pred_e = p_pred - error_model_pre
+    return p_pred_e
+
+P_pred_train = make_prediction(reg_model, poly_feature_trans, X)
+error_train = P_pred_train - y
+
+error_std = (error - np.min(error, axis=0, keepdims=True))/(np.max(error, axis=0, keepdims=True) - np.min(error, axis=0, keepdims=True))
+error_train_std = (error_train - np.min(error_train, axis=0, keepdims=True))/(np.max(error_train, axis=0, keepdims=True) - np.min(error_train, axis=0, keepdims=True))
+train_data_e = np.hstack((X, error_train_std))
+test_data_e = np.hstack((Xtest, error_std))
+
+Error_model = Predictor(3, 1, [128]*2, 'Error_model')
+Error_model.compile(loss='mean_squared_error',metrics='mean_squared_error',optimizer=Adam(learning_rate=1e-5))
+Error_model.summary()
+
+hist = Error_model.fit(X, error_train_std, batch_size=100, epochs=1000, validation_data=(Xtest, error_std), verbose=True, shuffle=True)
+
+
+# In[5]:
+
+
+plt.plot(hist.history['loss'],color = 'r',label = 'loss')
+plt.plot(hist.history['val_loss'],color = 'b',label = 'val_loss')
+plt.legend()
+
+
+# In[6]:
+
+
+error_pre_std = Error_model.predict(Xtest)
+P_pred_e = make_prediction_e(error_pre_std,error,P_pred)
+error_pre_e = P_pred_e - ytest
+
+P_pred_train_e = make_prediction_e(Error_model.predict(X),error_train,P_pred_train)
+error_pre_train_e = P_pred_train_e - y
+
+
+# In[7]:
+
+
+fig = plt.figure(figsize=(18, 8))
+ax1 = fig.add_subplot(121, projection='3d')
+p0 = ax1.scatter(Xtest[:, 0]*(Vmax-Vmin)+Vmin, 
+                Xtest[:, 1]*(Tmax-Tmin)+Tmin, 
+                P_pred*(Pmax-Pmin)+Pmin, 
+                alpha=1, marker="o", color="k", 
+                linewidths=2)
+p1 = ax1.scatter(X[:, 0]*(Vmax-Vmin)+Vmin, 
+                X[:, 1]*(Tmax-Tmin)+Tmin, 
+                y*(Pmax-Pmin)+Pmin, 
+                linewidths=2,
+                c='b')
+p2 = ax1.scatter(Xtest[:, 0]*(Vmax-Vmin)+Vmin, 
+                Xtest[:, 1]*(Tmax-Tmin)+Tmin, 
+                ytest*(Pmax-Pmin)+Pmin, 
+                linewidths=2,
+                c='r')
+ax1.set_xlabel(r'Volume ($\AA^{3}/atom$)', fontsize=15, labelpad=8)
+ax1.set_ylabel('Temperature (K)', fontsize=15, labelpad=12)
+ax1.set_zlabel('Pressure (GPa)', fontsize=15, labelpad=9)
+ax1.legend(['Simulation Data', 'Training Data', 'Test Data'], loc='upper right', fontsize=15)
+ax1.set_title('Prediction of polynomial regression',size = 20)
+
+ax2 = fig.add_subplot(122, projection='3d')
+p0 = ax2.scatter(Xtest[:, 0]*(Vmax-Vmin)+Vmin, 
+                Xtest[:, 1]*(Tmax-Tmin)+Tmin, 
+                P_pred_e*(Pmax-Pmin)+Pmin, 
+                alpha=1, marker="o", color="k", 
+                linewidths=2)
+p1 = ax2.scatter(X[:, 0]*(Vmax-Vmin)+Vmin, 
+                X[:, 1]*(Tmax-Tmin)+Tmin, 
+                y*(Pmax-Pmin)+Pmin, 
+                linewidths=2,
+                c='b')
+p2 = ax2.scatter(Xtest[:, 0]*(Vmax-Vmin)+Vmin, 
+                Xtest[:, 1]*(Tmax-Tmin)+Tmin, 
+                ytest*(Pmax-Pmin)+Pmin, 
+                linewidths=2,
+                c='r')
+ax2.set_xlabel(r'Volume ($\AA^{3}/atom$)', fontsize=15, labelpad=8)
+ax2.set_ylabel('Temperature (K)', fontsize=15, labelpad=12)
+ax2.set_zlabel('Pressure (GPa)', fontsize=15, labelpad=9)
+ax2.legend(['Simulation Data', 'Training Data', 'Test Data'], loc='upper right', fontsize=15)
+ax2.set_title('Prediction of neural networks',size = 20)
+
+fig = plt.figure(figsize=(10, 8))
+ax1 = fig.add_subplot(111, projection='3d')
+ax1.scatter(Xtest[:, 0]*(Vmax-Vmin)+Vmin, 
+           Xtest[:, 1]*(Tmax-Tmin)+Tmin, 
+           error, c='r')
+ax1.scatter(Xtest[:, 0]*(Vmax-Vmin)+Vmin, 
+           Xtest[:, 1]*(Tmax-Tmin)+Tmin, 
+           error_pre_e, c='k')
+ax1.set_xlabel(r'Volume ($\AA^{3}/atom$)', fontsize=15, labelpad=8)
+ax1.set_ylabel('Temperature (K)', fontsize=15, labelpad=12)
+ax1.set_zlabel('Error', fontsize=15, labelpad=9)
+ax1.set_title('Error surface', fontsize=20)
+ax1.legend(['Poly-Reg', 'NN predict residuals for Poly-Reg'], loc='upper right', fontsize=15)
+plt.show()
+
+
+# In[ ]:
+
+
+
+
+
+# In[8]:
+
+
+# %%
+'''
+Prediction on the regular grid
+'''
+num_pts = 10
+V = np.linspace(0,1,num_pts)
+T = np.linspace(0,1,num_pts)
+VV, TT = np.meshgrid(V, T)
+VT_grid = np.c_[VV.reshape((-1, 1)), 
+                TT.reshape((-1, 1))]
+if INCLUDING_LNT:
+    lnT_grid = VT_grid[:,-1:]*Tscale + Tmin
+    lnT_grid = np.log(lnT_grid)
+    lnT_grid = (lnT_grid - np.min(lnT_grid, axis=0, keepdims=True))/(np.max(lnT_grid, axis=0, keepdims=True) - np.min(lnT_grid, axis=0, keepdims=True))
+    VT_grid = np.c_[VT_grid, lnT_grid]
+
+P_grid = make_prediction(reg_model, poly_feature_trans, VT_grid)
+error_pre_std_grid = Error_model.predict(VT_grid)
+P_grid_e = make_prediction_e(error_pre_std_grid, error, P_grid)
+
+
+if P_pred.ndim == 1:
+    P_grid = P_grid[:,None]
+
+#%%
+fig = plt.figure(figsize=(18, 8))
+ax1 = fig.add_subplot(121, projection='3d')
+p0 = ax1.scatter(VT_grid[:, 0]*(Vmax-Vmin)+Vmin, 
+                VT_grid[:, 1]*(Tmax-Tmin)+Tmin, 
+                P_grid*(Pmax-Pmin)+Pmin, 
+                alpha=1, marker="o", color="k", 
+                linewidths=2)              
+p1 = ax1.scatter(X[:, 0]*(Vmax-Vmin)+Vmin, 
+                X[:, 1]*(Tmax-Tmin)+Tmin, 
+                y*(Pmax-Pmin)+Pmin, 
+                linewidths=2,
+                c='b')
+p2 = ax1.scatter(Xtest[:, 0]*(Vmax-Vmin)+Vmin, 
+                Xtest[:, 1]*(Tmax-Tmin)+Tmin, 
+                ytest*(Pmax-Pmin)+Pmin, 
+                linewidths=2,
+                c='r')
+ax1.set_xlabel(r'Volume ($\AA^{3}/atom$)', fontsize=15, labelpad=8)
+ax1.set_ylabel('Temperature (K)', fontsize=15, labelpad=12)
+ax1.set_zlabel('Pressure (GPa)', fontsize=15, labelpad=9)
+ax1.legend(['Simulation Data', 'Training Data', 'Test Data'], loc='upper right', fontsize=15)
+
+ax2 = fig.add_subplot(122, projection='3d')
+p0 = ax2.scatter(VT_grid[:, 0]*(Vmax-Vmin)+Vmin, 
+                VT_grid[:, 1]*(Tmax-Tmin)+Tmin, 
+                P_grid_e*(Pmax-Pmin)+Pmin, 
+                alpha=1, marker="o", color="k", 
+                linewidths=2)              
+p1 = ax2.scatter(X[:, 0]*(Vmax-Vmin)+Vmin, 
+                X[:, 1]*(Tmax-Tmin)+Tmin, 
+                y*(Pmax-Pmin)+Pmin, 
+                linewidths=2,
+                c='b')
+p2 = ax2.scatter(Xtest[:, 0]*(Vmax-Vmin)+Vmin, 
+                Xtest[:, 1]*(Tmax-Tmin)+Tmin, 
+                ytest*(Pmax-Pmin)+Pmin, 
+                linewidths=2,
+                c='r')
+ax2.set_xlabel(r'Volume ($\AA^{3}/atom$)', fontsize=15, labelpad=8)
+ax2.set_ylabel('Temperature (K)', fontsize=15, labelpad=12)
+ax2.set_zlabel('Pressure (GPa)', fontsize=15, labelpad=9)
+ax2.legend(['Simulation Data', 'Training Data', 'Test Data'], loc='upper right', fontsize=15)
+
+
+# In[9]:
+
+
+#%%
+'''
+pred surface
+'''
+
+
+fig = plt.figure(figsize=(18, 8))
+ax1 = fig.add_subplot(121, projection='3d')
+p11 = ax1.scatter(Xtest[:, 0]*(Vmax-Vmin)+Vmin, 
+            Xtest[:, 1]*(Tmax-Tmin)+Tmin, 
+            ytest*(Pmax-Pmin)+Pmin, 
+            linewidths=4, c=error, 
+            cmap='jet_r')
+
+p12 = ax1.scatter(X[:, 0]*(Vmax-Vmin)+Vmin, 
+                X[:, 1]*(Tmax-Tmin)+Tmin, 
+                y*(Pmax-Pmin)+Pmin, 
+                linewidths=4, c =error_train,
+                cmap='jet_r')
+cbar1 = fig.colorbar(p11, ax=ax1, shrink=0.6)
+cbar1.set_label(r'error \%', rotation=0, fontsize=15, labelpad=12)
+cbar1.ax.tick_params(labelsize=12)
+
+ax1.plot_surface(VV*(Vmax-Vmin)+Vmin, 
+                 TT*(Tmax-Tmin)+Tmin, 
+                 P_grid.reshape((num_pts, num_pts))*(Pmax-Pmin)+Pmin,
+                 alpha = 0.5) 
+ax1.set_xlabel(r'Volume ($\AA^{3}/atom$)', fontsize=15, labelpad=8)
+ax1.set_ylabel('Temperature (K)', fontsize=15, labelpad=12)
+ax1.set_zlabel('Pressure (GPa)', fontsize=15, labelpad=9)
+ax1.set_title('Prediction of polynomial regression',size = 20)
+
+ax2 = fig.add_subplot(122, projection='3d')
+p21 = ax2.scatter(Xtest[:, 0]*(Vmax-Vmin)+Vmin, 
+            Xtest[:, 1]*(Tmax-Tmin)+Tmin, 
+            ytest*(Pmax-Pmin)+Pmin, 
+            linewidths=4, c=error_pre_e, 
+            cmap='jet_r')
+p22 = ax2.scatter(X[:, 0]*(Vmax-Vmin)+Vmin, 
+                X[:, 1]*(Tmax-Tmin)+Tmin, 
+                y*(Pmax-Pmin)+Pmin, 
+                linewidths=4, c=error_pre_train_e,
+                cmap='jet_r')
+
+cbar2 = fig.colorbar(p21, ax=ax2, shrink=0.6)
+cbar2.set_label(r'error \%', rotation=0, fontsize=15, labelpad=12)
+cbar2.ax.tick_params(labelsize=12)
+
+ax2.plot_surface(VV*(Vmax-Vmin)+Vmin, 
+                 TT*(Tmax-Tmin)+Tmin, 
+                 P_grid_e.reshape((num_pts, num_pts))*(Pmax-Pmin)+Pmin,
+                 alpha = 0.5) 
+ax2.set_xlabel(r'Volume ($\AA^{3}/atom$)', fontsize=15, labelpad=8)
+ax2.set_ylabel('Temperature (K)', fontsize=15, labelpad=12)
+ax2.set_zlabel('Pressure (GPa)', fontsize=15, labelpad=9)
+ax2.set_title('Prediction of neural networks',size = 20)
+#ax1.legend(['Simulation Data', 'Pred Surface'], loc='upper right', fontsize=15)
+
+
+
+# In[10]:
+
+
+# %%
+
+fig, ax = plt.subplots(1, 3, figsize=(20, 8))
+
+# contour plot, i.e equal P contour
+ax[0].contourf(VV, TT, P_grid.reshape((num_pts, num_pts)), cmap='hot')
+ax[0].set_xlabel(r'Volume ($\AA^{3}/atom$)', fontsize=15, labelpad=8)
+ax[0].set_ylabel('Temperature (K)', fontsize=15, labelpad=12)
+ax[0].set_title('Pressure (GPa)', fontsize=15)
+
+# P-V curves at different T
+for i in range(num_pts):
+    ax[1].plot(V, P_grid[i*num_pts:(i+1)*num_pts], label=f'T={T[i]:.2f}')
+ax[1].set_xlabel(r'Volume ($\AA^{3}/atom$)', fontsize=15, labelpad=8)
+ax[1].set_ylabel('Pressure (GPa)', fontsize=15, labelpad=12)
+ax[1].set_title('P v.s V', fontsize=15)
+ax[1].legend()
+# P-T curves at different V
+for i in range(num_pts):
+    ax[2].plot(T, P_grid[i:num_pts**2:num_pts], label=f'V={V[i]:.2f}')
+ax[2].set_xlabel('Temperature (K)', fontsize=15, labelpad=8)
+ax[2].set_ylabel('Pressure (GPa)', fontsize=15, labelpad=12)
+ax[2].set_title('P v.s T', fontsize=15)
+ax[2].legend()
+# %%
+
+
+
+
+

@@ -1,0 +1,211 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+# In[1]:
+
+
+import matplotlib.pyplot as plt
+import numpy as np
+import random
+get_ipython().run_line_magic('matplotlib', 'qt')
+P_grid = np.loadtxt('C:/Users/DELL/Desktop/eos/P_pred_data.txt') # P_pred
+data= np.loadtxt('C:/Users/DELL/Desktop/eos/Bgm_rhoTP.txt') # rho, T, P
+
+dataX = data.copy()
+dataX[:,0] = 100.3870/dataX[:,0] # convert rho to V
+
+Data_min = np.min(dataX, axis=0)
+Data_max = np.max(dataX, axis=0)
+Data_scale = Data_max - Data_min
+
+Vmin, Tmin, Pmin = Data_min[0],Data_min[1],Data_min[-1]
+Vmax, Tmax, Pmax = Data_max[0],Data_max[1],Data_max[-1]
+Vscale, Tscale, Pscale = Data_scale[0],Data_scale[1],Data_scale[-1]
+
+
+# In[2]:
+
+
+num_pts = 20
+V = np.linspace(0,1,num_pts)
+T = np.linspace(0,1,num_pts)
+
+V = V*(Vmax-Vmin)+Vmin
+T = T*(Tmax-Tmin)+Tmin
+
+VV, TT = np.meshgrid(V, T)
+VT_grid = np.c_[VV.reshape((-1, 1)),  TT.reshape((-1, 1))]
+P_grid = P_grid*(Pmax-Pmin)+Pmin
+
+
+# In[3]:
+
+
+dataX = (dataX - np.min(dataX, axis=0, keepdims=True))/(np.max(dataX, axis=0, keepdims=True) - np.min(dataX, axis=0, keepdims=True))
+
+# get train/test split
+Tthres = 3010
+Pthres = 121
+LL_idx = np.logical_and(data[:,1] < Tthres, data[:,-1] < Pthres)
+LH_idx = np.logical_and(data[:,1] < Tthres, data[:,-1] >= Pthres)
+HL_idx = np.logical_and(data[:,1] >= Tthres, data[:,-1] < Pthres)
+HH_idx = np.logical_and(data[:,1] >= Tthres, data[:,-1] >= Pthres)
+
+EXP_TYPE = 0
+if EXP_TYPE == 0:
+    data_train = dataX[LL_idx]
+    data_test = dataX[HH_idx]
+elif EXP_TYPE == 1:
+    data_train = dataX[~HH_idx]
+    data_test = dataX[HH_idx]
+elif EXP_TYPE == 2:
+    data_train = dataX[::2]
+    data_test = dataX[1::2]
+
+print('Train size: ', data_train.shape[0])
+print('Test size: ', data_test.shape[0]) 
+
+X = data_train[:,:-1]
+y = data_train[:,-1:]
+# y += np.random.normal(0, 0.01, y.shape)  # this help improve the training
+Xtest = data_test[:,:-1]
+ytest = data_test[:,-1:]
+
+fig = plt.figure(figsize=(10, 8))
+ax1 = fig.add_subplot(111, projection='3d')
+p0 = ax1.scatter(VT_grid[:, 0], 
+                VT_grid[:, 1], 
+                P_grid, 
+                alpha=0.5, marker="o", color="k", 
+                linewidths=2)              
+p1 = ax1.scatter(X[:, 0]*(Vmax-Vmin)+Vmin, 
+                X[:, 1]*(Tmax-Tmin)+Tmin, 
+                y*(Pmax-Pmin)+Pmin, 
+                linewidths=2,
+                c='b')
+p2 = ax1.scatter(Xtest[:, 0]*(Vmax-Vmin)+Vmin, 
+                Xtest[:, 1]*(Tmax-Tmin)+Tmin, 
+                ytest*(Pmax-Pmin)+Pmin, 
+                linewidths=2,
+                c='r')
+ax1.set_xlabel(r'Volume ($\AA^{3}/atom$)', fontsize=15, labelpad=8)
+ax1.set_ylabel('Temperature (K)', fontsize=15, labelpad=12)
+ax1.set_zlabel('Pressure (GPa)', fontsize=15, labelpad=9)
+ax1.legend(['Simulation Data', 'Training Data', 'Test Data'], loc='upper right', fontsize=15)
+plt.show()
+
+
+# In[4]:
+
+
+# In[5]:
+
+
+# fig, ax = plt.subplots(1, 3, figsize=(20, 8))
+
+# # contour plot, i.e equal P contour
+# ax[0].contourf(VV, TT, P_grid.reshape((num_pts, num_pts)), cmap='hot')
+# ax[0].set_xlabel(r'Volume ($\AA^{3}/atom$)', fontsize=15, labelpad=8)
+# ax[0].set_ylabel('Temperature (K)', fontsize=15, labelpad=12)
+# ax[0].set_title('Pressure (GPa)', fontsize=15)
+
+# # P-V curves at different T
+# for i in range(num_pts):
+#     ax[1].plot(V, P_grid[i*num_pts:(i+1)*num_pts], label=f'T={T[i]:.2f}')
+#     ax[1].set_xlabel(r'Volume ($\AA^{3}/atom$)', fontsize=15, labelpad=8)
+#     ax[1].set_ylabel('Pressure (GPa)', fontsize=15, labelpad=12)
+#     ax[1].set_title('P v.s V', fontsize=15)
+#     ax[1].legend()
+# # P-T curves at different V
+# for i in range(num_pts):
+#     ax[2].plot(T, P_grid[i:num_pts**2:num_pts], label=f'V={V[i]:.2f}')
+#     ax[2].set_xlabel('Temperature (K)', fontsize=15, labelpad=8)
+#     ax[2].set_ylabel('Pressure (GPa)', fontsize=15, labelpad=12)
+#     ax[2].set_title('P v.s T', fontsize=15)
+#     ax[2].legend()
+# # %%
+
+
+# In[ ]:
+
+
+# 初始化 积分常数C
+C = np.linspace(3000,5000,num_pts)  # C_i = F(V_0,T_i) ,i=0,2,...,num_pts-1
+for i in range(num_pts):
+    C[i] += random.gauss(100,10)
+    
+P_fixT = np.full((num_pts,num_pts),0.0)
+for i in range(num_pts):
+    P_fixT[i] = P_grid[i*num_pts:(i+1)*num_pts]
+
+
+# In[8]:
+
+
+# integrate
+def integrate_P(t_id, c_array = C):
+    int_p = np.linspace(0,1,num_pts)  # int_p[i] = F(V_i,T_k) ,i=0,2,...,num_pts-1  k = C[t]
+    int_p[0] = c_array[t_id] 
+    for i in range(num_pts-1):
+        # 梯形公式
+        int_p[i+1] = int_p[0] - 0.5*(P_fixT[t_id][i+1]+P_fixT[t_id][0])*(V[i+1]-V[0])
+    return int_p    # int_p = [F(V_0,T),F(V_1,T),...,F(V_n-1,T)]  T为t_id所对应的温度
+
+# caculate F(V,T)
+F = np.full((num_pts,num_pts),0.0)
+for i in range(num_pts): # V
+    for j in range(num_pts): # T
+        F[i][j] = integrate_P(j)[i]
+
+fig = plt.figure(figsize=(18, 8))
+ax1 = fig.add_subplot(121)
+
+# F-V curve
+for i in range(num_pts):
+    ax1.plot(V,integrate_P(i),label=f'T={T[i]:.2f}K')
+ax1.set_xlabel(r'Volume ($\AA^{3}/atom$)', fontsize=15, labelpad=8)
+ax1.set_ylabel('F (?e?N)', fontsize=15, labelpad=12,rotation=0)
+ax1.set_title('F v.s V', fontsize=15)
+ax1.legend()
+plt.show()
+
+# F-T curve
+ax2 = fig.add_subplot(122)
+
+for i in range(num_pts):
+    ax2.plot(T,F[i],label=f'V={V[i]:.2f}$\AA^{3}/atom$')
+ax2.set_xlabel(r'Temperature (K)', fontsize=15, labelpad=8)
+ax2.set_ylabel('F (?e?N)', fontsize=15, labelpad=12,rotation=0)
+ax2.set_title('F v.s T', fontsize=15)
+ax2.legend()
+plt.show()
+
+
+# In[9]:
+
+
+# caculate E(V,T)
+E = np.full((num_pts,num_pts),0.0)
+    
+for i in range(num_pts): # V
+    for j in range(num_pts-1): # T
+        E[i][j] = F[i][j] - T[j]*((F[i][j+1]-F[i][j])/(T[j+1]-T[j]))
+    E[i][num_pts-1] = F[i][num_pts-1] - T[num_pts-1]*((F[i][num_pts-1]-F[i][num_pts-2])/(T[num_pts-1]-T[num_pts-2]))
+
+
+fig = plt.figure(figsize=(10, 8))
+ax = fig.add_subplot(111, projection='3d')
+p1 = ax.scatter(VV, TT, E, linewidths=4)
+ax.set_xlabel(r'Volume ($\AA^{3}/atom$)', fontsize=15, labelpad=8)
+ax.set_ylabel('Temperature (K)', fontsize=15, labelpad=12,rotation = 0)
+ax.set_zlabel('Energe (?e?J)', fontsize=15, labelpad=9)
+ax.legend(['Simulation Data'], loc='upper right', fontsize=15)
+ax.set_title('Prediction of Energe', fontsize=20)
+plt.show()
+
+
+# In[ ]:
+
+
+
+

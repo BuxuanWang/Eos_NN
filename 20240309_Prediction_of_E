@@ -189,7 +189,9 @@ E = np.full((num_pts,num_pts),0.0)
     
 for i in range(num_pts): # V
     for j in range(num_pts-1): # T
+        # F对T的偏导数用该点的差商值近似
         E[i][j] = F[i][j] - T[j]*((F[i][j+1]-F[i][j])/(T[j+1]-T[j]))
+    # 由于F对T的差商会导致维数-1，E的最后一行，使用前一行的差商值近似
     E[i][num_pts-1] = F[i][num_pts-1] - T[num_pts-1]*((F[i][num_pts-1]-F[i][num_pts-2])/(T[num_pts-1]-T[num_pts-2]))
 
 
